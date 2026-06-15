@@ -1,0 +1,29 @@
+{
+  "imports": true,
+  "finite_loss": true,
+  "finite_rmse": true,
+  "fairness_in_range": true,
+  "result": {
+    "policy": "two_stage::active_balanced",
+    "channel": "burst",
+    "seed": 11,
+    "start": 80,
+    "horizon": 60,
+    "b_probe": 3,
+    "b_payload": 3,
+    "metadata_noise": 0.05,
+    "metadata_loss": 0.0,
+    "debt_mode": "bounded",
+    "rmse_mean": 0.14215514421184283,
+    "loss_mean": 0.00017123113432199058,
+    "missed_violation_pct": 0.0,
+    "metadata_seen_frac_mean": 0.25,
+    "debt_changed_decision_pct": 66.10169491525424,
+    "payload_success_pct": 88.70056497175142,
+    "payload_fairness_jain": 0.9907969639468377,
+    "probe_fairness_jain": 0.9915495632358212,
+    "max_age": 3.0,
+    "avg_age": 1.5,
+    "max_payload_debt": 0.1709039548022599
+  }
+}
