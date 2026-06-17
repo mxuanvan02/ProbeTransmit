@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "ProbeTransmit: Threshold-Aware Reliable Scheduling for Probe-Then-Transmit IoT Networks"
+title: "ProbeTransmit: Threshold-Aware Safety-Critical Scheduling with Provable Fairness for Probe-Then-Transmit IoT Networks"
 message: "If you use this software, please cite the associated manuscript."
 type: software
 authors:

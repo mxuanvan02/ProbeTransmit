@@ -9,3 +9,16 @@ _build/
 outputs/
 data/raw/
 data/interim/
+
+# --- Public release: allow the small processed panels used by the paper ---
+!data/raw/
+!data/raw/intel_berkeley/
+!data/raw/intel_berkeley/intel_panel_30motes.npy
+!data/raw/intel_berkeley/intel_panel_12motes.npy
+!data/raw/intel_berkeley/mote_locs.txt
+!data/raw/intel_berkeley/connectivity.txt
+!data/raw/_candidates/
+!data/raw/_candidates/beijing_prsa/
+!data/raw/_candidates/beijing_prsa/beijing_temp_panel.npy
+!data/raw/_candidates/keti_smartbuilding/
+!data/raw/_candidates/keti_smartbuilding/keti_clean_panel.npy
