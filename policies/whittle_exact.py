@@ -65,7 +65,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from probe_transmit import safety  # noqa: E402
-from probe_transmit.channel import predict_success  # noqa: E402
+from probe_transmit.channel import predict_success, predict_success_vec  # noqa: E402
 from probe_transmit.policies import Policy, SchedulerState, topk  # noqa: E402
 
 from math import erf, sqrt  # noqa: E402
@@ -342,8 +342,7 @@ class WhittleExactProbe(Policy):
         params = _node_params_from_state(state, self.lambda_safety, self.h)
         idx = engine.indices_from_params(params)
         # Channel scaling keeps the comparison aligned with VoU/CAW-VoU.
-        p_succ = float(np.clip(predict_success(state.pi_bad, state.channel),
-                               0.25, 1.0))
+        p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
         return topk(p_succ * idx, min(state.b_probe, state.n))
 
 

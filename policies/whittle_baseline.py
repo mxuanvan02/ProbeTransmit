@@ -41,7 +41,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from probe_transmit import safety  # noqa: E402
-from probe_transmit.channel import predict_success  # noqa: E402
+from probe_transmit.channel import predict_success, predict_success_vec  # noqa: E402
 from probe_transmit.policies import Policy, SchedulerState, topk  # noqa: E402
 
 
@@ -107,7 +107,7 @@ def _whittle_index(state: SchedulerState, mu: np.ndarray, var: np.ndarray) -> np
     """
     sd = np.sqrt(np.maximum(var, 1e-12))
     margin = safety.margin_to_safety(mu)  # 1.0 at threshold, 0.0 deep-safe
-    p_succ = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+    p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
     return p_succ * sd * (1.0 + margin)
 
 

@@ -16,7 +16,7 @@ from typing import Callable
 import numpy as np
 
 from . import safety
-from .channel import ChannelParams, predict_success
+from .channel import ChannelParams, predict_success, predict_success_vec
 from .forecast import AR1Model
 
 
@@ -34,7 +34,7 @@ class SchedulerState:
     probe_counts: np.ndarray
     total_payload_choices: int
     total_probe_choices: int
-    pi_bad: float
+    pi_bad: np.ndarray
     last_metadata: np.ndarray
     last_metadata_age: np.ndarray
     extras: dict = field(default_factory=dict)
@@ -276,7 +276,7 @@ class VoUProbe(Policy):
         )
         xh_safe = ((state.xh >= safety.SAFE_MIN) & (state.xh <= safety.SAFE_MAX)).astype(float)
         vou = track_gap + self.lambda_safety * pvio * xh_safe
-        p_succ = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+        p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
         return topk(p_succ * vou, min(state.b_probe, state.n))
 
 
@@ -387,7 +387,7 @@ class WhittleVoIProbe(Policy):
 
     def select_probe(self, state: SchedulerState) -> np.ndarray:
         mu, var = state.ar.forecast_stats(state.xh, state.age, h=4)
-        p_succ = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+        p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
 
         # Step 2: Payload Index on prior belief (v2: use empirical_safety_prob).
         i2_prior = self._payload_index(mu, var, state.xh, p_succ, ar_model=state.ar)
@@ -464,7 +464,7 @@ class WhittleVoUShield(Policy):
     
     def select_probe(self, state: SchedulerState) -> np.ndarray:
         mu, var = state.ar.forecast_stats(state.xh, state.age, h=4)
-        p_succ = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+        p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
         
         # Step 1: Identify shield set (high violation probability loops)
         pvio = state.ar.empirical_safety_prob(
@@ -588,7 +588,7 @@ class DebtAwarePayload:
     def select(self, state: SchedulerState, probe_set: np.ndarray, metadata: np.ndarray, mask: np.ndarray) -> np.ndarray:
         values = metadata_safety_value(state, metadata, mask)
         debt = state.fairness_debt("payload")
-        reliability = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+        reliability = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
         score = reliability * self.V * safety.normalize_unit(values) + debt
         residual = safety.normalize_unit(((metadata - state.xh) / safety.RANGE) ** 2)
         score = score - self.w_residual * residual
@@ -620,7 +620,7 @@ class ConstrainedAdaptiveGreedyPayload:
         values = metadata_safety_value(state, metadata, mask)
         debt = state.fairness_debt("payload")
         age = safety.normalize_unit(state.age.astype(float))
-        reliability = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+        reliability = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
         return reliability * self.V * safety.normalize_unit(values) + self.w_debt * debt + self.w_age * age
 
     def _shield_candidates(self, state: SchedulerState, metadata: np.ndarray, mask: np.ndarray) -> np.ndarray:

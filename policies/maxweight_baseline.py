@@ -45,7 +45,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from probe_transmit import safety  # noqa: E402
-from probe_transmit.channel import predict_success  # noqa: E402
+from probe_transmit.channel import predict_success, predict_success_vec  # noqa: E402
 from probe_transmit.policies import (  # noqa: E402
     Policy,
     SchedulerState,
@@ -115,7 +115,7 @@ class MaxWeightProbe(Policy):
         # weight by delivery probability. For AoI we leave the queue unscaled
         # (canonical age MaxWeight).
         if self.variant == "vou":
-            p_succ = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+            p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
             score = p_succ * score
         return topk(score, b)
 
@@ -150,7 +150,7 @@ class MaxWeightPayload:
             )
             xh_safe = ((state.xh >= safety.SAFE_MIN) & (state.xh <= safety.SAFE_MAX)).astype(float)
             arrival = track_gap + 6.0 * pvio * xh_safe
-            p_succ = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+            p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
             score = p_succ * (q + arrival)
         return topk(score, b)
 

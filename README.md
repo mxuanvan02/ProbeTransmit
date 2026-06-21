@@ -4,18 +4,19 @@ This repository contains the public reproducibility code for the manuscript:
 
 > Threshold-Aware Reliable Scheduling with Provable Fairness for Probe-Then-Transmit IoT Networks
 
-The implementation evaluates CAW-VoU, a threshold-aware two-stage probe-then-transmit scheduler for bandwidth-constrained IoT monitoring. The public release includes the core simulator, scheduler implementations, baseline policies, manuscript result tables, and scripts used to regenerate the main analyses.
+The implementation evaluates CAW-VoU, a threshold-aware two-stage probe-then-transmit scheduler for bandwidth-constrained IoT monitoring. The public release ships the core simulator, scheduler implementations, baseline policies, and the scripts used to produce every analysis in the manuscript. Result tables and figures are **not shipped**: readers regenerate them by running the scripts below, then check the numbers against the manuscript.
 
 ## Repository layout
 
 ```text
 src/probe_transmit/      Core simulator, channel, forecasting, safety, and scheduler components
-policies/                Baseline policy implementations (AoII, VoI, Whittle, MaxWeight)
-scripts/                 Reproducibility scripts for evaluation/theory figures
+policies/                Baseline policy implementations (AoII, VoI, Whittle, MaxWeight, DT+AoI, recent SOTA)
+scripts/                 Reproducibility scripts for evaluation and theory
 scripts/verify/          Lightweight verification entry point
-docs/                    Processed result tables used in the manuscript
-figures/                 Publication figures generated from result tables
+data/raw/                Small processed sensor panels needed to run the scripts
 ```
+
+Running the scripts creates `docs/`, `figures/`, and `reports/` locally; these are intentionally untracked so the repository carries only code and source data.
 
 ## Data policy
 
@@ -25,7 +26,7 @@ Raw third-party datasets are **not redistributed** in this repository. Please do
 - Beijing Multi-Site Air Quality / PRSA dataset
 - KETI Smart-Building / AISTATS cross-predictability dataset
 
-The repository includes processed result tables used in the manuscript so that key plots and summary checks can be inspected without redistributing raw data.
+The repository includes small processed sensor panels under `data/raw/` so the scripts run end-to-end and readers can regenerate every manuscript number locally.
 
 ## Installation
 
@@ -49,10 +50,21 @@ If raw datasets are available under `data/raw/`, the full evaluation scripts can
 Examples:
 
 ```bash
-python scripts/theory_validation.py --output figures/theory_validation.png
+python scripts/theory_validation.py
 python scripts/plot_sensitivity.py
 python scripts/tail_metrics.py
 ```
+
+These scripts write their tables and figures into `docs/` and `figures/` in your local checkout (both untracked). Compare the regenerated numbers against the manuscript to verify reproducibility.
+
+The danger-term ablation table (classic vs. ev-cost vs. severity VoU) is reproduced by:
+
+```bash
+python scripts/ablation_danger_evcost.py      # classic + ev-cost rows
+python scripts/ablation_danger_severity.py    # classic + severity rows
+```
+
+Both default to the 30 matched Intel windows used in the manuscript.
 
 Full real-data benchmark scripts expect the downloaded datasets to be placed under the paths documented in the corresponding script headers.
 

@@ -36,6 +36,7 @@ self-contained smoke test:
 from __future__ import annotations
 
 import sys
+from math import erf
 from pathlib import Path
 
 import numpy as np
@@ -47,7 +48,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from probe_transmit import safety  # noqa: E402
-from probe_transmit.channel import predict_success  # noqa: E402
+from probe_transmit.channel import predict_success, predict_success_vec  # noqa: E402
 from probe_transmit.policies import Policy, SchedulerState, service_debt, topk  # noqa: E402
 
 
@@ -157,6 +158,10 @@ class CorrVoUProbe(Policy):
         w_debt: float = 0.05,
         use_correlation_credit: bool = True,
         credit_mode: str = "variance",
+        use_first_passage: bool = False,
+        fp_mode: str = "analytic",
+        vou_mode: str = "classic",
+        rho: float = 6.0,
     ):
         self.corr = None if corr is None else np.asarray(corr, dtype=float)
         self.lambda_safety = float(lambda_safety)
@@ -164,6 +169,25 @@ class CorrVoUProbe(Policy):
         self.sigma_meta_var = float(metadata_noise_std) ** 2
         self.w_debt = float(w_debt)
         self.use_correlation_credit = bool(use_correlation_credit)
+        # use_first_passage: if True, the safety term is the PREDICTIVE
+        # first-passage probability P(signal exits the safe band at ANY time in
+        # [t, t+h]) under the trend-aware forecaster, instead of the
+        # point-in-time exit probability at exactly step h. Turns VoU from
+        # *confirming* a current/horizon-end violation into *predicting* an
+        # imminent one. Requires state.ar to expose first_passage_prob (LLT/AR1).
+        self.use_first_passage = bool(use_first_passage)
+        # fp_mode selects the danger term when use_first_passage is on:
+        #   "analytic" -> closed-form (Brownian) first_passage_prob
+        #   "mc"       -> AR(1) Monte-Carlo Bayes-optimal first_passage_prob_mc
+        self.fp_mode = str(fp_mode)
+        # vou_mode: "classic" = track_gap + lambda*P_danger (original, ad-hoc);
+        #   "ev_cost" = expected-cost-reduction VoU (estimation-theoretic):
+        #   tracking term = error-covariance reduction (bias^2+var -> sigma^2),
+        #   safety term = reduction in expected boundary exceedance E[(x-u)_+]
+        #   under the Gaussian belief; both in signal^2 units so the safety
+        #   weight rho is dimensionless (no hand-tuned lambda).
+        self.vou_mode = str(vou_mode)
+        self.rho = float(rho)
         # credit_mode: "variance" = original conditional-variance credit (sums
         # VoU reduction over all peers equally); "danger_gated" = weight each
         # peer's credit by its own danger (proximity to threshold), so probing
@@ -179,16 +203,98 @@ class CorrVoUProbe(Policy):
         xh_safe: np.ndarray,
         track: np.ndarray,
     ) -> np.ndarray:
-        """val_i(v_i) = track_i + lambda * p_vio_i(mu_i, v_i) * I(xh_i safe).
+        """val_i = track_i + lambda * P_danger_i * I(xh_i safe).
 
-        p_vio uses the EMPIRICAL safety probability (VoU's winning ingredient),
-        evaluated at the supplied (possibly conditional) variance v.
+        P_danger is either:
+          - the PREDICTIVE first-passage probability P(exit safe band at ANY
+            step in [t, t+h]) under the trend-aware forecaster, when
+            ``use_first_passage`` is set (and state.ar supports it), or
+          - the EMPIRICAL point-in-time exit probability at the horizon
+            (original VoU ingredient), evaluated at conditional variance v.
         """
-        p_vio = state.ar.empirical_safety_prob(
-            mu, np.maximum(v, 1e-12),
-            safe_min=safety.SAFE_MIN, safe_max=safety.SAFE_MAX,
-        )
-        return track + self.lambda_safety * p_vio * xh_safe
+        if self.vou_mode == "severity":
+            # Severity-aware VoU (Bayes expected operational cost, math-first):
+            #   Danger = P_vio  +  (kappa/RANGE) * ES,   ES = E[(X-u)_+]
+            # Classic P_vio is the leading (eps^0) term; the expected-shortfall
+            # ES is the severity correction (LEVEL, not reduction), large exactly
+            # near/over a bound. Reduces to classic as the field gets stationary
+            # (suppression lemma: ES/P_vio -> v/(u-mu) -> 0). See
+            # docs/severity_vou_derivation.md.
+            vv = np.maximum(v, 1e-12)
+            sd = np.sqrt(vv)
+            p_vio = state.ar.empirical_safety_prob(
+                mu, vv, safe_min=safety.SAFE_MIN, safe_max=safety.SAFE_MAX,
+            )
+
+            def _phi(zz):
+                return np.exp(-0.5 * zz * zz) / np.sqrt(2 * np.pi)
+
+            def _Phi(zz):
+                return 0.5 * (1.0 + np.vectorize(erf)(zz / np.sqrt(2.0)))
+
+            # E[(X-Smax)_+] for X~N(mu,vv)
+            z_hi = (mu - safety.SAFE_MAX) / sd
+            es_hi = sd * (_phi(z_hi) + z_hi * _Phi(z_hi))
+            # E[(Smin-X)_+]
+            z_lo = (safety.SAFE_MIN - mu) / sd
+            es_lo = sd * (_phi(z_lo) + z_lo * _Phi(z_lo))
+            es = np.maximum(es_hi, 0.0) + np.maximum(es_lo, 0.0)
+            danger = p_vio + (self.rho / safety.RANGE) * es
+            return track + self.lambda_safety * danger * xh_safe
+
+        if self.vou_mode == "ev_cost":
+            # Expected-shortfall VoU (estimation-theoretic, dimensionless rho).
+            # Tracking value = error-covariance reduction: current squared error
+            # (bias^2 from belief drift + predictive variance v) relative to the
+            # one-step residual variance sigma^2 attained once the sensor is served.
+            sig2 = np.asarray(state.ar.sigma, dtype=float) ** 2
+            est_now = (mu - state.xh) ** 2 + np.maximum(v, 1e-12)
+            track_reduction = np.maximum(est_now - sig2, 0.0) / (safety.RANGE ** 2)
+            # Safety value = the EXPECTED BOUNDARY EXCEEDANCE under the Gaussian
+            # belief N(mu, v): E[(x-Smax)_+] + E[(Smin-x)_+]. This is a closed-form
+            # partial moment (an expected-shortfall risk measure), large precisely
+            # when the belief sits near/over a safety bound -- it measures POSITION
+            # risk, not accumulated uncertainty, so it fires at the right sensors.
+            sd = np.sqrt(np.maximum(v, 1e-12))
+            z_hi = (mu - safety.SAFE_MAX) / sd
+            z_lo = (safety.SAFE_MIN - mu) / sd
+            phi = np.exp(-0.5 * z_hi * z_hi) / np.sqrt(2 * np.pi)
+            phi_lo = np.exp(-0.5 * z_lo * z_lo) / np.sqrt(2 * np.pi)
+            Phi_hi = 0.5 * (1.0 + np.vectorize(erf)(z_hi / np.sqrt(2)))
+            Phi_lo = 0.5 * (1.0 + np.vectorize(erf)(z_lo / np.sqrt(2)))
+            up = sd * phi + (mu - safety.SAFE_MAX) * Phi_hi
+            lo = sd * phi_lo + (safety.SAFE_MIN - mu) * Phi_lo
+            exceedance = (np.maximum(up, 0.0) + np.maximum(lo, 0.0)) / safety.RANGE
+            return track_reduction + self.rho * exceedance * xh_safe
+
+        if self.use_first_passage and hasattr(state.ar, "first_passage_prob"):
+            last_md = getattr(state, "last_metadata", None)
+            if self.fp_mode == "mc" and hasattr(state.ar, "first_passage_prob_mc"):
+                p_danger = state.ar.first_passage_prob_mc(
+                    state.xh, state.age,
+                    safe_min=safety.SAFE_MIN, safe_max=safety.SAFE_MAX,
+                    horizon=self.h,
+                )
+            else:
+                try:
+                    p_danger = state.ar.first_passage_prob(
+                        state.xh, state.age,
+                        safe_min=safety.SAFE_MIN, safe_max=safety.SAFE_MAX,
+                        horizon=self.h, last_metadata=last_md,
+                    )
+                except TypeError:
+                    # AR1Model.first_passage_prob has no last_metadata kwarg.
+                    p_danger = state.ar.first_passage_prob(
+                        state.xh, state.age,
+                        safe_min=safety.SAFE_MIN, safe_max=safety.SAFE_MAX,
+                        horizon=self.h,
+                    )
+        else:
+            p_danger = state.ar.empirical_safety_prob(
+                mu, np.maximum(v, 1e-12),
+                safe_min=safety.SAFE_MIN, safe_max=safety.SAFE_MAX,
+            )
+        return track + self.lambda_safety * p_danger * xh_safe
 
     def select_probe(self, state: SchedulerState) -> np.ndarray:
         n = state.n
@@ -203,7 +309,7 @@ class CorrVoUProbe(Policy):
         xh_safe = (
             (state.xh >= safety.SAFE_MIN) & (state.xh <= safety.SAFE_MAX)
         ).astype(float)
-        p_succ = float(np.clip(predict_success(state.pi_bad, state.channel), 0.25, 1.0))
+        p_succ = np.clip(predict_success_vec(state.pi_bad, state.channel), 0.25, 1.0)
         debt = service_debt(
             state.probe_counts, state.total_probe_choices, state.probe_target_share()
         )
@@ -278,7 +384,7 @@ class CorrVoUProbe(Policy):
                 peer_mask[j] = False
                 credit = float(np.sum(((base_val - val_after) * danger_w)[peer_mask]))
                 delta_j = gain_self + credit
-                score_j = p_succ * delta_j + self.w_debt * debt[j]
+                score_j = float(p_succ[j]) * delta_j + self.w_debt * debt[j]
                 if score_j > best_score:
                     best_score, best_j = score_j, j
             S.append(best_j)
@@ -292,13 +398,13 @@ class CorrVoUProbe(Policy):
 # Self-contained smoke test.                                                   #
 # --------------------------------------------------------------------------- #
 def _build_state(n, b_probe, b_payload, ar, channel, xh, age, rng):
-    from probe_transmit.channel import stationary_bad_belief
+    from probe_transmit.channel import stationary_bad_belief_vec
     return SchedulerState(
         n=n, b_probe=b_probe, b_payload=b_payload, rng=rng, ar=ar, channel=channel,
         xh=xh.copy(), age=age.copy(),
         payload_counts=np.zeros(n), probe_counts=np.zeros(n),
         total_payload_choices=0, total_probe_choices=0,
-        pi_bad=stationary_bad_belief(channel),
+        pi_bad=stationary_bad_belief_vec(channel, n),
         last_metadata=xh.copy(), last_metadata_age=np.zeros(n, dtype=int),
     )
 

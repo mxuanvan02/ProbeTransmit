@@ -1,3 +1,4 @@
+# --- Python ---
 __pycache__/
 *.py[cod]
 .DS_Store
@@ -6,11 +7,36 @@ venv/
 .env
 *.log
 _build/
+
+# --- Throwaway experiments / spikes (not part of the released method) ---
+scripts/spike_*.py
+
+# --- Internal backups / working copies ---
+_backups/
+**/_backup_*/
+*_OLD_*.csv
+*_OLD_*.npy
+
+# --- Generated results: regenerate by running the scripts (not shipped) ---
+# The repository ships code + source data only; all results below are produced
+# by re-running the scripts, so readers reproduce them rather than trust ours.
+docs/
+reports/
+figures/
 outputs/
-data/raw/
+data/processed/
 data/interim/
 
-# --- Public release: allow the small processed panels used by the paper ---
+# --- Internal drafts / planning notes (not for public release) ---
+*_draft*.md
+*draft*.md
+negative_result_*.md
+*_derivation.md
+*_plan.md
+CODE_RELEASE_AUDIT.md
+
+# --- Raw datasets: ship only the small processed panels the paper needs ---
+data/raw/
 !data/raw/
 !data/raw/intel_berkeley/
 !data/raw/intel_berkeley/intel_panel_30motes.npy

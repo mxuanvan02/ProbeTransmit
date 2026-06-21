@@ -12,7 +12,16 @@ import numpy as np
 import pandas as pd
 
 from . import safety
-from .channel import CHANNELS, ChannelParams, step_state, stationary_bad_belief, update_bad_belief
+from .channel import (
+    CHANNELS,
+    ChannelParams,
+    step_state,
+    stationary_bad_belief,
+    update_bad_belief,
+    step_state_vec,
+    stationary_bad_belief_vec,
+    update_bad_belief_vec,
+)
 from .forecast import AR1Model
 from .policies import SchedulerState, TwoStagePolicy, build
 
@@ -41,8 +50,8 @@ def run_window(
     probe_counts = np.zeros(n)
     last_metadata = data[start].copy()
     last_metadata_age = np.zeros(n, dtype=int)
-    pi_bad = stationary_bad_belief(channel)
-    bad = False
+    pi_bad = stationary_bad_belief_vec(channel, n)
+    bad = np.zeros(n, dtype=bool)
 
     state = SchedulerState(
         n=n,
@@ -67,6 +76,7 @@ def run_window(
     err_history = []
     losses = []
     missed = []
+    overshoot_history = []
     metadata_seen = []
     payload_success_history = []
     debt_changes = 0
@@ -102,17 +112,28 @@ def run_window(
             debt_changes += 1
         payload_steps += 1
 
-        # Apply payload deliveries through the channel.
+        # Apply payload deliveries through PER-ARM independent channels.
         state.age += 1
-        for i in payload_set:
-            state.payload_counts[i] += 1
-            state.total_payload_choices += 1
-            ok, bad = step_state(channel, rng, bad)
-            payload_success_history.append(int(ok))
-            state.pi_bad = update_bad_belief(state.pi_bad, ok, channel)
-            if ok:
-                state.xh[i] = x_true[i]
-                state.age[i] = 0
+        payload_idx = np.asarray(payload_set, dtype=int)
+        served = np.zeros(n, dtype=bool)
+        if payload_idx.size > 0:
+            served[payload_idx] = True
+            state.payload_counts[payload_idx] += 1
+            state.total_payload_choices += int(payload_idx.size)
+        # Advance all N latent G-E modes (restless) and draw delivery outcomes
+        # for served sensors; unserved sensors' modes still drift.
+        ok_vec, bad = step_state_vec(channel, rng, bad, served)
+        # Per-arm belief filter (predict-all, update-served).
+        state.pi_bad = update_bad_belief_vec(state.pi_bad, ok_vec, served, channel)
+        # Successful deliveries refresh the held estimate and reset age.
+        success_idx = np.where(ok_vec & served)[0]
+        for i in success_idx:
+            payload_success_history.append(1)
+            state.xh[i] = x_true[i]
+            state.age[i] = 0
+        # Record the misses among served sensors too (for success-rate metric).
+        n_miss = int(served.sum()) - int(success_idx.size)
+        payload_success_history.extend([0] * n_miss)
         # Accumulating-debt bookkeeping: age-of-service for the payload stage
         # (slots since last selected for payload). Served -> 0, others +1.
         if state.payload_service_age is not None:
@@ -125,6 +146,15 @@ def run_window(
         losses.append(step_loss)
         missed.append(step_missed)
         err_history.append((state.xh - x_true).copy())
+        # Tail metric: severity of UNDETECTED violations (policy-dependent).
+        # A violation at sensor i is "missed" when the TRUE value leaves the band
+        # but the held estimate xh still reports inside it -> the system fails to
+        # see it. We record the overshoot magnitude of x_true ONLY at those
+        # missed sensors; detected violations (xh also outside) contribute 0.
+        true_over = np.maximum(x_true - safety.SAFE_MAX, 0.0) + np.maximum(safety.SAFE_MIN - x_true, 0.0)
+        xh_inside = (state.xh >= safety.SAFE_MIN) & (state.xh <= safety.SAFE_MAX)
+        undetected_over = true_over * (true_over > 0) * xh_inside
+        overshoot_history.append(undetected_over.copy())
 
     err_arr = np.asarray(err_history)
     losses_arr = np.asarray(losses)
@@ -143,6 +173,9 @@ def run_window(
         "rmse_mean": float(np.mean(np.sqrt(np.mean(err_arr ** 2, axis=0)))),
         "loss_mean": float(losses_arr.mean()),
         "missed_violation_pct": float(100 * missed_arr.mean()),
+        "overshoot_p90": float(np.percentile(np.asarray(overshoot_history), 90)),
+        "overshoot_p99": float(np.percentile(np.asarray(overshoot_history), 99)),
+        "overshoot_max": float(np.max(overshoot_history)) if overshoot_history else 0.0,
         "metadata_seen_frac_mean": float(np.mean(metadata_seen)),
         "debt_changed_decision_pct": float(100 * debt_changes / max(payload_steps, 1)),
         "payload_success_pct": float(100 * np.mean(payload_success_history)) if payload_success_history else 100.0,

@@ -57,6 +57,7 @@ from probe_transmit.forecast import AR1Model  # noqa: E402
 from probe_transmit.simulator import run_window  # noqa: E402
 from probe_transmit.policies import TwoStagePolicy, DebtAwarePayload  # noqa: E402
 from new_algorithm import CorrVoUProbe, fit_correlation  # noqa: E402
+from policies.sota_recent_baselines import make_sota_policy  # noqa: E402
 from policies.whittle_baseline import WhittleProbe, WhittlePayload  # noqa: E402
 from policies.aoii_baseline import make_aoii_policy  # noqa: E402
 from policies.maxweight_baseline import make_maxweight_policy  # noqa: E402
@@ -73,6 +74,11 @@ POLICY_ORDER = [
     "MaxWeight-VoU",
     "VoI-greedy",
     "VoI+debt",
+    "OnlineWhittle-2024",
+    "MultiChanWhittle-2023",
+    "RiskAwareAoII-2026",
+    "QAoI-Whittle-2024",
+    "QVAoI-2024",
 ]
 
 _DATA = None
@@ -107,6 +113,14 @@ def _build_policies():
         ("MaxWeight-VoU", make_maxweight_policy("vou")),
         ("VoI-greedy", make_voi_policy("greedy")),
         ("VoI+debt", make_voi_policy("debt")),
+        # Recent (2023-2026) SoTA baselines, as-published (gamma=0). Faithful
+        # reimplementations of the published index rules; see
+        # docs/sota_baselines_plan.md for verified arXiv IDs.
+        ("OnlineWhittle-2024", make_sota_policy("online_whittle", gamma=0.0)),
+        ("MultiChanWhittle-2023", make_sota_policy("mc_whittle", gamma=0.0)),
+        ("RiskAwareAoII-2026", make_sota_policy("risk_aoii")),
+        ("QAoI-Whittle-2024", make_sota_policy("qaoi_whittle")),
+        ("QVAoI-2024", make_sota_policy("qvaoi")),
     ]
 
 
@@ -136,6 +150,8 @@ def _run_one_window(args):
             "loss": float(m["loss_mean"]),
             "rmse": float(m["rmse_mean"]),
             "missed_vio": float(m["missed_violation_pct"]),
+            "overshoot_p90": float(m.get("overshoot_p90", 0.0)),
+            "overshoot_p99": float(m.get("overshoot_p99", 0.0)),
             "runtime": float(m["runtime_ms_per_step"]),
             "max_age": float(m["max_age"]),
             "jain_probe": float(m["probe_fairness_jain"]),
@@ -210,7 +226,7 @@ def summarize(df, out_csv):
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv, index=False)
     present = [p for p in POLICY_ORDER if p in df.policy.unique()]
-    metrics = ["loss", "rmse", "missed_vio", "runtime"]
+    metrics = ["loss", "rmse", "missed_vio", "overshoot_p90", "overshoot_p99", "runtime"]
 
     print("\n" + "=" * 100)
     print("SOTA 30-WINDOW PAIRED COMPARISON (mean +/- 95% CI)")
