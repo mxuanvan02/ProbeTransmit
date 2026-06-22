@@ -1,8 +1,8 @@
-# ProbeTransmit: Threshold-Aware Reliable Scheduling for Probe-Then-Transmit IoT Networks
+# ProbeTransmit: Threshold-Aware Probe-Then-Transmit Scheduling for Safety-Critical IoT Monitoring
 
 This repository contains the public reproducibility code for the manuscript:
 
-> Threshold-Aware Reliable Scheduling with Provable Fairness for Probe-Then-Transmit IoT Networks
+> Threshold-Aware Probe-Then-Transmit Scheduling for Safety-Critical IoT Monitoring
 
 The implementation evaluates CAW-VoU, a threshold-aware two-stage probe-then-transmit scheduler for bandwidth-constrained IoT monitoring. The public release ships the core simulator, scheduler implementations, baseline policies, and the scripts used to produce every analysis in the manuscript. Result tables and figures are **not shipped**: readers regenerate them by running the scripts below, then check the numbers against the manuscript.
 
